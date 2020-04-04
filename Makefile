@@ -1,18 +1,20 @@
-CC = gcc
+CC=gcc
+CFLAGS=-O2 -W -Werror -Wall
+PROG=camel
+OBJS=camel.o message.o 
 
-all: camel client epoll_demo
+all: $(PROG) httpstub
 
-message.o: message.h
-	$(CC) message.c -c -o message.o -Werror -g
+%.o: %.c
+	$(CC) -c $(CFLAGS) $< -o $@
 
-camel:
-	$(CC) camel.c -o camel -Werror -g
+$(PROG): $(OBJS)
+	$(CC) $(OBJS) -o $(PROG) -lpthread
 
-epoll_demo:
-	$(CC) epoll_demo.c -o epoll_demo -Werror -g
+httpstub:
+	$(CC) httpstub.c -o httpstub -lpthread
 
-client: message.o
-	$(CC) client.c -o client -Werror -g message.o
+.PHONY:clean
 
 clean:
-	@rm -v epoll_demo camel client message.o
+	rm -rf *.o $(PROG) httpstub

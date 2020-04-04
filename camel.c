@@ -198,7 +198,7 @@ int main(int argc, char *argv[])
             else if ((events[i].events & EPOLLOUT) && (events[i].data.fd != sfd))
             {
                 /* 接入的socket有数据可写 */
-                write(events[i].data.fd, "it's echo man\n", 14);
+                s = write(events[i].data.fd, "it's echo man\n", 14);
                 event.events = EPOLLET | EPOLLIN;
                 epoll_ctl(efd, EPOLL_CTL_MOD, events[i].data.fd, &event);
             }
