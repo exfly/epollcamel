@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-O2 -W -Werror -Wall
+CFLAGS=-DDEBUG -I. -O2 -W -Werror -Wall
 PROG=camel
 OBJS=camel.o message.o 
 

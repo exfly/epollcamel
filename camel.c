@@ -10,6 +10,10 @@
 #include <sys/epoll.h>
 #include <string.h>
 
+#include "atomic.h"
+
+#include "debug.h"
+
 #define MAXEVENTS 1024
 
 int create_and_bind(int port)
@@ -56,8 +60,20 @@ int read_param(int argc, char *argv[])
     return atoi(argv[1]);
 }
 
+int new_id(atomic_t* value) {
+    return ++value->counter;
+}
+
+typedef struct Channel {
+    int fd;
+    uint32_t events;
+    int id;
+} Channel;
+
 int main(int argc, char *argv[])
 {
+    atomic_t genid;
+
     int sfd, s;
     int efd;
     struct epoll_event event;
@@ -90,10 +106,15 @@ int main(int argc, char *argv[])
         perror("epoll_create");
         abort();
     }
-    event.data.fd = sfd;
+    Channel server_ch;
+    server_ch.fd = sfd;
+    server_ch.id = new_id(&genid);
     /* 设置ET模式 */
-    event.events = EPOLLIN | EPOLLET;
-    s = epoll_ctl(efd, EPOLL_CTL_ADD, sfd, &event);
+    server_ch.events = EPOLLIN | EPOLLET;
+
+    event.data.ptr = &server_ch;
+    event.events = server_ch.events;
+    s = epoll_ctl(efd, EPOLL_CTL_ADD, server_ch.fd, &event);
     if (s == -1)
     {
         perror("epoll_ctl");
@@ -112,12 +133,13 @@ int main(int argc, char *argv[])
             {
                 /* 监控到错误或者挂起 */
                 fprintf(stderr, "epoll error\n");
-                close(events[i].data.fd);
+                close(((Channel*)events[i].data.ptr)->fd);
                 continue;
             }
             if (events[i].events & EPOLLIN)
             {
-                if (sfd == events[i].data.fd)
+                Channel* ch = (Channel*)events[i].data.ptr;
+                if (sfd == ch->fd)
                 {
                     /* 处理新接入的socket */
                     while (1)
@@ -140,17 +162,22 @@ int main(int argc, char *argv[])
                             }
                         }
                         inet_ntop(AF_INET, &sa.sin_addr, hbuf, sizeof(hbuf));
+                        int id = new_id(&genid);
                         printf("Accepted connection on descriptor %d "
-                               "(host=%s, port=%d)\n",
-                               infd, hbuf, sa.sin_port);
+                               "(host=%s, port=%d, id=%d)\n",
+                               infd, hbuf, sa.sin_port, id);
                         /* 设置接入的socket为非阻塞 */
                         s = make_socket_non_blocking(infd);
                         if (s == -1)
                             abort();
                         /* 为新接入的socket注册事件 */
-                        event.data.fd = infd;
-                        event.events = EPOLLIN | EPOLLET;
-                        s = epoll_ctl(efd, EPOLL_CTL_ADD, infd, &event);
+                        Channel* inch = (Channel*)malloc(sizeof(struct Channel));
+                        inch->fd = infd;
+                        inch->events = EPOLLIN | EPOLLET;
+                        inch->id = id;
+                        event.data.ptr = inch;
+                        event.events = inch->events;
+                        s = epoll_ctl(efd, EPOLL_CTL_ADD, inch->fd, &event);
                         if (s == -1)
                         {
                             perror("epoll_ctl");
@@ -166,21 +193,24 @@ int main(int argc, char *argv[])
                     {
                         ssize_t count;
                         char buf[512];
-                        count = read(events[i].data.fd, buf, sizeof buf);
+                        Channel* ch = (Channel*)events[i].data.ptr;
+                        count = read(ch->fd, buf, sizeof buf);
                         if (count == -1)
                         {
                             if (errno != EAGAIN)
                             {
                                 perror("read");
-                                close(events[i].data.fd);
+                                close(ch->fd);
                             }
                             break;
                         }
                         else if (count == 0)
                         {
                             /* 数据读取完毕，结束 */
-                            close(events[i].data.fd);
-                            printf("Closed connection on descriptor %d\n", events[i].data.fd);
+                            close(ch->fd);
+                            printf("Closed connection on descriptor fd=%d, id=%d\n", ch->fd, ch->id);
+                            free(ch);
+                            ch = NULL;
                             break;
                         }
                         /* 输出到stdout */
@@ -190,17 +220,20 @@ int main(int argc, char *argv[])
                             perror("write");
                             abort();
                         }
-                        event.events = EPOLLOUT | EPOLLET;
-                        epoll_ctl(efd, EPOLL_CTL_MOD, events[i].data.fd, &event);
+                        ch->events = EPOLLOUT | EPOLLET;
+                        event.events = ch->events;
+                        epoll_ctl(efd, EPOLL_CTL_MOD, ch->fd, &event);
                     }
                 }
             }
-            else if ((events[i].events & EPOLLOUT) && (events[i].data.fd != sfd))
+            else if ((events[i].events & EPOLLOUT) && (((Channel*)events[i].data.ptr)->fd != sfd))
             {
+                Channel * ch = (Channel*)events[i].data.ptr;
                 /* 接入的socket有数据可写 */
-                s = write(events[i].data.fd, "it's echo man\n", 14);
-                event.events = EPOLLET | EPOLLIN;
-                epoll_ctl(efd, EPOLL_CTL_MOD, events[i].data.fd, &event);
+                s = write(ch->fd, "it's echo man\n", 14);
+                ch->events = EPOLLET | EPOLLIN;
+                event.events = ch->events;
+                epoll_ctl(efd, EPOLL_CTL_MOD, ch->fd, &event);
             }
         }
     }
@@ -208,6 +241,7 @@ int main(int argc, char *argv[])
     close(sfd);
     return EXIT_SUCCESS;
 }
+
 // https://blog.lucode.net/linux/epoll-tutorial.html
 // gcc echoman.c -o echoman
 // nc 127.0.0.1 8000
