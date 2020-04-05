@@ -85,6 +85,7 @@ int handle_input(Channel *ch)
     debug("handle_input %p", ch);
     return 0;
 }
+
 int handle_process(Channel *ch)
 {
     int s = write(STDOUT_FILENO, ch->data, ch->datalen);
@@ -93,8 +94,11 @@ int handle_process(Channel *ch)
         perror("write");
         abort();
     }
+    ch->event.events = EPOLLOUT | EPOLLET;
+    epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
     return 0;
 }
+
 int handle_output(Channel *ch)
 {
     ssize_t flag = write(ch->fd, "it's echo man\n", 14);
@@ -278,8 +282,6 @@ int main(int argc, char *argv[])
                     }
                     /* 输出到stdout */
                     handle_process(ch);
-                    ch->event.events = EPOLLOUT | EPOLLET;
-                    epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
                 }
             }
             else if ((events[i].events & EPOLLOUT) && dataptr != NULL && (((Channel *)dataptr)->fd != server_ch.fd))
