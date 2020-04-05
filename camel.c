@@ -76,10 +76,37 @@ typedef struct Channel
 
     struct sockaddr_in sa;
     char host[INET_ADDRSTRLEN];
+    char data[512];
+    size_t datalen;
 } Channel;
+
+int handle_input(Channel *ch)
+{
+    debug("handle_input %p", ch);
+    return 0;
+}
+int handle_process(Channel *ch)
+{
+    int s = write(STDOUT_FILENO, ch->data, ch->datalen);
+    if (s == -1)
+    {
+        perror("write");
+        abort();
+    }
+    return 0;
+}
+int handle_output(Channel *ch)
+{
+    ssize_t flag = write(ch->fd, "it's echo man\n", 14);
+    debug("handle_output write id(%d) len(%zu)\n", ch->id, flag);
+    ch->event.events = EPOLLET | EPOLLIN;
+    epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
+    return 0;
+}
 
 int main(int argc, char *argv[])
 {
+    debug("main\n");
     Channel server_ch;
     int s;
     struct epoll_event *events;
@@ -132,7 +159,7 @@ int main(int argc, char *argv[])
             void *dataptr = events[i].data.ptr;
             if (dataptr == NULL)
             {
-                debug("dataptr == NULL");
+                debug("dataptr == NULL\n");
                 continue;
             }
             if (events[i].events & (EPOLLERR | EPOLLHUP))
@@ -146,6 +173,7 @@ int main(int argc, char *argv[])
                     event.data.ptr = NULL;
                     epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &event);
                     close(ch->fd);
+                    debug("free ptr: id(%d)\n", ch->id);
                     free(ch);
                     events[i].data.ptr = NULL;
                 }
@@ -190,6 +218,7 @@ int main(int argc, char *argv[])
                         Channel *inch = (Channel *)malloc(sizeof(struct Channel));
                         inch->id = new_id(&genid);
                         inch->fd = infd;
+                        inch->datalen = sizeof inch->data;
                         inch->epollfd = server_ch.epollfd;
                         inch->sa = sa;
                         strncpy(inch->host, hbuf, INET_ADDRSTRLEN);
@@ -202,23 +231,21 @@ int main(int argc, char *argv[])
                             perror("epoll_ctl");
                             abort();
                         }
-                        debug("debug: accept id(%d),fd(%d), data(%p)", inch->id, inch->fd, inch);
+                        debug("debug: accept id(%d),fd(%d), data(%p)\n", inch->id, inch->fd, inch);
                     }
                     //continue;
                 }
                 else
                 {
                     /* 接入的socket有数据可读 */
+                    Channel *ch = (Channel *)events[i].data.ptr;
+                    if (ch == NULL)
+                    {
+                        debug("ch is null\n");
+                    }
                     while (1)
                     {
-                        Channel *ch = (Channel *)events[i].data.ptr;
-                        if (ch == NULL)
-                        {
-                            debug("ch is null");
-                        }
-                        ssize_t count;
-                        char buf[512];
-                        count = read(ch->fd, buf, sizeof buf);
+                        ssize_t count = read(ch->fd, ch->data, ch->datalen);
                         if (count == -1)
                         {
                             if (errno != EAGAIN)
@@ -226,34 +253,40 @@ int main(int argc, char *argv[])
                                 perror("read");
                                 close(ch->fd);
                             }
+                            debug("try again\n");
                             break;
                         }
                         else if (count == 0)
                         {
+                            debug("read finished\n");
                             /* 数据读取完毕，结束 */
                             close(ch->fd);
                             printf("\nClosed connection on descriptor fd=%d, id=%d\n", ch->fd, ch->id);
+                            if (dataptr != NULL)
+                            {
+                                Channel *ch = (Channel *)dataptr;
+                                struct epoll_event event = ch->event;
+                                event.data.ptr = NULL;
+                                epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &event);
+                                close(ch->fd);
+                                debug("free ptr: id(%d)\n", ch->id);
+                                free(ch);
+                                events[i].data.ptr = NULL;
+                            }
                             break;
                         }
-                        /* 输出到stdout */
-                        s = write(STDOUT_FILENO, buf, count);
-                        if (s == -1)
-                        {
-                            perror("write");
-                            abort();
-                        }
-                        ch->event.events = EPOLLOUT | EPOLLET;
-                        epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
                     }
+                    /* 输出到stdout */
+                    handle_process(ch);
+                    ch->event.events = EPOLLOUT | EPOLLET;
+                    epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
                 }
             }
             else if ((events[i].events & EPOLLOUT) && dataptr != NULL && (((Channel *)dataptr)->fd != server_ch.fd))
             {
-                Channel *ch = (Channel *)dataptr;
                 /* 接入的socket有数据可写 */
-                write(ch->fd, "it's echo man\n", 14);
-                ch->event.events = EPOLLET | EPOLLIN;
-                epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
+                Channel *ch = (Channel *)dataptr;
+                handle_output(ch);
             }
         }
     }

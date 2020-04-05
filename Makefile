@@ -9,10 +9,10 @@ all: clean $(PROG) httpstub client
 	$(CC) -c $(CFLAGS) $< -o $@
 
 $(PROG): $(OBJS)
-	$(CC) camel.c $(OBJS) -o $(PROG) -lpthread
+	$(CC) camel.c $(OBJS) -o $(PROG) $(CFLAGS)
 
 client: $(OBJS)
-	$(CC) client.c $(OBJS) -o client -lpthread
+	$(CC) client.c $(OBJS) -o client $(CFLAGS)
 
 httpstub:
 	$(CC) httpstub.c -o httpstub -lpthread

@@ -34,13 +34,12 @@ int main(int argc, char *argv[])
     // 发送数据到服务器
     Message msg = message_builder(MSG, "it's client\n");
 
-    write(sock, &msg, sizeof(msg));
-
+    ssize_t wsize = write(sock, &msg, sizeof(msg));
     // 读取服务器传回的数据
     char buffer[40];
-    read(sock, buffer, sizeof(buffer) - 1);
+    ssize_t rsize = read(sock, buffer, sizeof(buffer) - 1);
 
-    printf("Message form server: %s\n", buffer);
+    printf("Message form server: w(%zu), r(%zu), msg(%s)\n", wsize, rsize, buffer);
 
     //关闭套接字
     close(sock);
