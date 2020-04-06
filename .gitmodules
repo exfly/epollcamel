@@ -1,0 +1,9 @@
+[submodule "third_part/log.c"]
+	path = third_part/log.c
+	url = https://github.com/mixinlib/log.c.git
+[submodule "third_part/map"]
+	path = third_part/map
+	url = https://github.com/mixinlib/map.git
+[submodule "third_part/vec"]
+	path = third_part/vec
+	url = https://github.com/mixinlib/vec.git

@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "atomic.h"
+#include "log.h"
 
 #include "debug.h"
 
@@ -77,6 +78,8 @@ typedef struct Channel
     struct sockaddr_in sa;
     char host[INET_ADDRSTRLEN];
     size_t datalen;
+    char *rev_buf;
+    char *send_buf;
     char data[512];
 } Channel;
 
@@ -100,7 +103,7 @@ int handle_input(Channel *ch)
             debug("read finished\n");
             /* 数据读取完毕，结束 */
             close(ch->fd);
-            printf("\nClosed connection on descriptor fd=%d, id=%d\n", ch->fd, ch->id);
+            log_trace("Closed connection on descriptor fd=%d, id=%d", ch->fd, ch->id);
             ch->event.data.ptr = NULL;
             epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &ch->event);
             close(ch->fd);
@@ -110,12 +113,8 @@ int handle_input(Channel *ch)
         }
     }
 
-    int s = write(STDOUT_FILENO, ch->data, ch->datalen);
-    if (s == -1)
-    {
-        perror("write");
-        abort();
-    }
+    log_trace("%p\n", ch->data);
+
     ch->event.events = EPOLLOUT | EPOLLET;
     epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);
     return 0;
@@ -123,7 +122,9 @@ int handle_input(Channel *ch)
 
 int handle_output(Channel *ch)
 {
-    ssize_t flag = write(ch->fd, "it's echo man\n", 14);
+    char buf[27];
+    sprintf(buf, "id(%0d),msg(%s)\n", ch->id, "it's echo man");
+    ssize_t flag = write(ch->fd, buf, sizeof buf);
     debug("handle_output write id(%d) len(%zu)\n", ch->id, flag);
     ch->event.events = EPOLLET | EPOLLIN;
     epoll_ctl(ch->epollfd, EPOLL_CTL_MOD, ch->fd, &ch->event);

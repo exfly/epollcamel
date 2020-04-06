@@ -7,8 +7,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "log.h"
+
 #ifdef DEBUG
-#define debug(arg...) printf(arg)
+// #define debug(arg...) printf(arg)
+#define debug(arg...) log_trace(arg)
 #else
 #define debug(arg...)
 #endif

@@ -1,7 +1,8 @@
 CC=gcc
-CFLAGS=-DDEBUG -I. -O2 -W -Werror -Wall
+# -std=c99
+CFLAGS=-DDEBUG -DLOG_USE_COLOR -I. -O2 -W -Werror -Wall
 PROG=camel
-OBJS=message.o 
+OBJS=message.o log.o
 
 all: clean $(PROG) httpstub client
 

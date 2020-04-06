@@ -9,6 +9,7 @@ typedef enum MessageType
 
 typedef struct Message
 {
+    int len;
     MessageType type;
     char body[255];
 } Message;
