@@ -76,18 +76,40 @@ typedef struct Channel
 
     struct sockaddr_in sa;
     char host[INET_ADDRSTRLEN];
-    char data[512];
     size_t datalen;
+    char data[512];
 } Channel;
 
 int handle_input(Channel *ch)
 {
-    debug("handle_input %p", ch);
-    return 0;
-}
+    while (1)
+    {
+        ssize_t count = read(ch->fd, ch->data, ch->datalen);
+        if (count == -1)
+        {
+            if (errno != EAGAIN)
+            {
+                perror("read");
+                close(ch->fd);
+            }
+            debug("try again\n");
+            break;
+        }
+        if (count == 0)
+        {
+            debug("read finished\n");
+            /* 数据读取完毕，结束 */
+            close(ch->fd);
+            printf("\nClosed connection on descriptor fd=%d, id=%d\n", ch->fd, ch->id);
+            ch->event.data.ptr = NULL;
+            epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &ch->event);
+            close(ch->fd);
+            debug("free ptr: id(%d)\n", ch->id);
+            free(ch);
+            break;
+        }
+    }
 
-int handle_process(Channel *ch)
-{
     int s = write(STDOUT_FILENO, ch->data, ch->datalen);
     if (s == -1)
     {
@@ -166,13 +188,14 @@ int main(int argc, char *argv[])
                 debug("dataptr == NULL\n");
                 continue;
             }
+            Channel *ch = (Channel *)dataptr;
+            // error
             if (events[i].events & (EPOLLERR | EPOLLHUP))
             {
                 /* 监控到错误或者挂起 */
                 fprintf(stderr, "epoll error\n");
                 if (dataptr != NULL)
                 {
-                    Channel *ch = (Channel *)dataptr;
                     struct epoll_event event = ch->event;
                     event.data.ptr = NULL;
                     epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &event);
@@ -183,111 +206,66 @@ int main(int argc, char *argv[])
                 }
                 continue;
             }
-            if (events[i].events & EPOLLIN)
+            // accept new client
+            if (events[i].events & EPOLLIN && server_ch.fd == ch->fd)
             {
-                Channel *ch = (Channel *)dataptr;
-                if (server_ch.fd == ch->fd)
+                while (1)
                 {
-                    /* 处理新接入的socket */
-                    while (1)
+                    struct sockaddr_in sa;
+                    socklen_t len = sizeof(sa);
+                    char hbuf[INET_ADDRSTRLEN];
+                    int infd = accept(server_ch.fd, (struct sockaddr *)&sa, &len);
+                    if (infd == -1)
                     {
-                        struct sockaddr_in sa;
-                        socklen_t len = sizeof(sa);
-                        char hbuf[INET_ADDRSTRLEN];
-                        int infd = accept(server_ch.fd, (struct sockaddr *)&sa, &len);
-                        if (infd == -1)
+                        if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
                         {
-                            if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
-                            {
-                                /* 资源暂时不可读，再来一遍 */
-                                break;
-                            }
-                            else
-                            {
-                                perror("accept");
-                                break;
-                            }
+                            /* 资源暂时不可读，再来一遍 */
+                            break;
                         }
-                        inet_ntop(AF_INET, &sa.sin_addr, hbuf, sizeof(hbuf));
-                        printf("Accepted connection on descriptor %d "
-                               "(host=%s, port=%d)\n",
-                               infd, hbuf, sa.sin_port);
-                        /* 设置接入的socket为非阻塞 */
-                        s = make_socket_non_blocking(infd);
-                        if (s == -1)
+                        else
                         {
-                            abort();
+                            perror("accept");
+                            break;
                         }
-                        /* 为新接入的socket注册事件 */
-                        Channel *inch = (Channel *)malloc(sizeof(struct Channel));
-                        inch->id = new_id(&genid);
-                        inch->fd = infd;
-                        inch->datalen = sizeof inch->data;
-                        inch->epollfd = server_ch.epollfd;
-                        inch->sa = sa;
-                        strncpy(inch->host, hbuf, INET_ADDRSTRLEN);
+                    }
+                    inet_ntop(AF_INET, &sa.sin_addr, hbuf, sizeof(hbuf));
+                    printf("Accepted connection on descriptor %d "
+                           "(host=%s, port=%d)\n",
+                           infd, hbuf, sa.sin_port);
+                    /* 设置接入的socket为非阻塞 */
+                    s = make_socket_non_blocking(infd);
+                    if (s == -1)
+                    {
+                        abort();
+                    }
+                    /* 为新接入的socket注册事件 */
+                    Channel *inch = (Channel *)malloc(sizeof(struct Channel));
+                    inch->id = new_id(&genid);
+                    inch->fd = infd;
+                    inch->datalen = sizeof inch->data;
+                    inch->epollfd = server_ch.epollfd;
+                    inch->sa = sa;
+                    strncpy(inch->host, hbuf, INET_ADDRSTRLEN);
 
-                        inch->event.data.ptr = inch;
-                        inch->event.events = EPOLLIN | EPOLLET;
-                        s = epoll_ctl(inch->epollfd, EPOLL_CTL_ADD, inch->fd, &inch->event);
-                        if (s == -1)
-                        {
-                            perror("epoll_ctl");
-                            abort();
-                        }
-                        debug("debug: accept id(%d),fd(%d), data(%p)\n", inch->id, inch->fd, inch);
-                    }
-                    //continue;
-                }
-                else
-                {
-                    /* 接入的socket有数据可读 */
-                    Channel *ch = (Channel *)events[i].data.ptr;
-                    if (ch == NULL)
+                    inch->event.data.ptr = inch;
+                    inch->event.events = EPOLLIN | EPOLLET;
+                    s = epoll_ctl(inch->epollfd, EPOLL_CTL_ADD, inch->fd, &inch->event);
+                    if (s == -1)
                     {
-                        debug("ch is null\n");
+                        perror("epoll_ctl");
+                        abort();
                     }
-                    while (1)
-                    {
-                        ssize_t count = read(ch->fd, ch->data, ch->datalen);
-                        if (count == -1)
-                        {
-                            if (errno != EAGAIN)
-                            {
-                                perror("read");
-                                close(ch->fd);
-                            }
-                            debug("try again\n");
-                            break;
-                        }
-                        else if (count == 0)
-                        {
-                            debug("read finished\n");
-                            /* 数据读取完毕，结束 */
-                            close(ch->fd);
-                            printf("\nClosed connection on descriptor fd=%d, id=%d\n", ch->fd, ch->id);
-                            if (dataptr != NULL)
-                            {
-                                Channel *ch = (Channel *)dataptr;
-                                struct epoll_event event = ch->event;
-                                event.data.ptr = NULL;
-                                epoll_ctl(ch->epollfd, EPOLL_CTL_DEL, ch->fd, &event);
-                                close(ch->fd);
-                                debug("free ptr: id(%d)\n", ch->id);
-                                free(ch);
-                                events[i].data.ptr = NULL;
-                            }
-                            break;
-                        }
-                    }
-                    /* 输出到stdout */
-                    handle_process(ch);
+                    debug("debug: accept id(%d),fd(%d), data(%p)\n", inch->id, inch->fd, inch);
                 }
             }
-            else if ((events[i].events & EPOLLOUT) && dataptr != NULL && (((Channel *)dataptr)->fd != server_ch.fd))
+            // consume client request
+            if (events[i].events & EPOLLIN && server_ch.fd != ch->fd)
             {
-                /* 接入的socket有数据可写 */
-                Channel *ch = (Channel *)dataptr;
+                handle_input(ch);
+            }
+            // client response
+            if ((events[i].events & EPOLLOUT) && dataptr != NULL && (((Channel *)dataptr)->fd != server_ch.fd))
+            {
                 handle_output(ch);
             }
         }
